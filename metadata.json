@@ -1,0 +1,8 @@
+{
+  "name": "AI创意",
+  "description": "一个全能的AI创作平台，支持文本、图像和视频生成，专为电商和创意人士设计。",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
