@@ -22,16 +22,6 @@ export interface DialogueSession {
   timestamp: number;
 }
 
-export interface UserRecord {
-  id: string;
-  type: AppMode;
-  title: string;
-  content: string;
-  timestamp: number;
-  params?: any;
-  resultUrl?: string;
-}
-
 export interface AppConfig {
   model: string;
   ratio?: string;
@@ -49,5 +39,22 @@ export interface CaseItem {
   type: AppMode;
   prompt: string;
   icon: string;
-  previewUrl?: string; // URL for image or video preview
+  previewUrl?: string;
+}
+
+// Analytics Types - Granular Tracking
+export interface UserModeStat {
+  pv: number;
+  points: number;
+}
+
+export interface UserDailyStat {
+  [mode: string]: UserModeStat;
+}
+
+export interface DateLog {
+  date: string; // YYYY-MM-DD
+  users: {
+    [userId: string]: UserDailyStat;
+  };
 }
