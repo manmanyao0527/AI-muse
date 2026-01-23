@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   MessageSquare, 
-  Image as ImageIcon, 
-  Video as VideoIcon, 
+  ImageIcon, 
+  VideoIcon, 
   Plus, 
   Search,
   Settings2,
@@ -16,17 +16,14 @@ import {
   RefreshCw,
   Download,
   ChevronRight,
-  Timer,
   ChevronDown,
   LayoutDashboard,
   Calendar,
   Activity,
-  ArrowLeft,
-  Filter,
   Users,
   Box,
   TrendingUp,
-  Terminal
+  ChevronUp
 } from 'lucide-react';
 import { AppMode, DialogueSession, Message, AppConfig, CaseItem, DateLog, UserDailyStat } from './types';
 import { DAILY_TOKEN_LIMIT, MODELS, IMAGE_RATIOS, VIDEO_RATIOS, VIDEO_DURATIONS, STYLES, CASES } from './constants';
@@ -47,6 +44,9 @@ const App: React.FC = () => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+
+  const [expandedOverview, setExpandedOverview] = useState<Set<string>>(new Set());
+  const [expandedAudit, setExpandedAudit] = useState<Set<string>>(new Set());
 
   const [config, setConfig] = useState<AppConfig>({
     model: MODELS.text[0],
@@ -375,54 +375,64 @@ const App: React.FC = () => {
     </div>
   );
 
+  const toggleExpandOverview = (date: string) => {
+    setExpandedOverview(prev => {
+      const next = new Set(prev);
+      if (next.has(date)) next.delete(date);
+      else next.add(date);
+      return next;
+    });
+  };
+
+  const toggleExpandAudit = (id: string) => {
+    setExpandedAudit(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const renderLogsView = () => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+    const currentDate = now.getDate();
+
+    let lastDayToShow: number;
+    if (year === currentYear && month === currentMonth) {
+      lastDayToShow = currentDate;
+    } else {
+      lastDayToShow = new Date(year, month, 0).getDate();
+    }
+
+    const allDates: string[] = [];
+    for (let d = lastDayToShow; d >= 1; d--) {
+      allDates.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+    }
+
     const filteredLogs = logs.filter(l => l.date.startsWith(selectedMonth));
-    const moduleSummary: { [dateAndMode: string]: { date: string, mode: AppMode, pv: number, points: number, uvCount: number } } = {};
-    const userSummary: { date: string, userId: string, mode: AppMode, pv: number, points: number }[] = [];
-    
+    const userActiveDays: { [uid: string]: Set<string> } = {};
+    const monthUniqueUsers = new Set<string>();
     let totalPv = 0;
     let totalPoints = 0;
-    const monthUniqueUsers = new Set<string>();
-    const userActiveDays: { [uid: string]: Set<string> } = {};
 
     filteredLogs.forEach(log => {
       Object.entries(log.users).forEach(([uId, modes]) => {
         monthUniqueUsers.add(uId);
         if (!userActiveDays[uId]) userActiveDays[uId] = new Set();
-
-        Object.entries(modes as UserDailyStat).forEach(([mode, stat]) => {
+        Object.values(modes as UserDailyStat).forEach(stat => {
           totalPv += stat.pv;
           totalPoints += stat.points;
           if (stat.pv > 0 || stat.points > 0) {
             userActiveDays[uId].add(log.date);
-            const key = `${log.date}-${mode}`;
-            if (!moduleSummary[key]) {
-              moduleSummary[key] = { date: log.date, mode: mode as AppMode, pv: 0, points: 0, uvCount: 0 };
-            }
-            moduleSummary[key].pv += stat.pv;
-            moduleSummary[key].points += stat.points;
-            userSummary.push({ date: log.date, userId: uId, mode: mode as AppMode, pv: stat.pv, points: stat.points });
           }
         });
-      });
-      
-      Object.keys(moduleSummary).forEach(key => {
-        const [date, mode] = key.split('-');
-        const currentLog = logs.find(l => l.date === date);
-        if (currentLog) {
-          const uvSet = new Set();
-          Object.entries(currentLog.users).forEach(([uid, mStats]) => {
-             const stat = mStats[mode];
-             if (stat && (stat.pv > 0 || stat.points > 0)) uvSet.add(uid);
-          });
-          moduleSummary[key].uvCount = uvSet.size;
-        }
       });
     });
 
     const mauCount = Object.keys(userActiveDays).filter(uId => userActiveDays[uId].size > 9).length;
-    const sortedModuleSummary = Object.values(moduleSummary).sort((a, b) => b.date.localeCompare(a.date));
-    const sortedUserSummary = userSummary.sort((a, b) => b.date.localeCompare(a.date));
 
     return (
       <div className="max-w-6xl mx-auto w-full flex flex-col space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
@@ -458,7 +468,6 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Metric Cards - PV, UV, Points, MAU */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white p-6 rounded-[24px] border border-gray-100 shadow-sm flex items-center space-x-4">
             <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center"><Activity className="text-blue-600" size={24} /></div>
@@ -474,38 +483,97 @@ const App: React.FC = () => {
           </div>
           <div className="bg-white p-6 rounded-[24px] border border-gray-100 shadow-sm flex items-center space-x-4 border-l-4 border-l-blue-500">
             <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center"><TrendingUp className="text-blue-600" size={24} /></div>
-            <div><p className="text-xs font-bold text-blue-600 uppercase tracking-wider">月活 (MAU)</p><p className="text-2xl font-bold text-gray-800">{mauCount}</p><p className="text-[9px] text-gray-400 mt-1">月 UV > 9</p></div>
+            <div><p className="text-xs font-bold text-blue-600 uppercase tracking-wider">月活 (MAU)</p><p className="text-2xl font-bold text-gray-800">{mauCount}</p><p className="text-[9px] text-gray-400 mt-1">月活跃天数>9</p></div>
           </div>
         </div>
 
         {activeLogTab === 'overview' ? (
-          <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden animate-in fade-in slide-in-from-right-4 duration-300">
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/30">
+          <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-gray-100 bg-gray-50/30 flex items-center justify-between">
               <h3 className="font-bold text-gray-800 flex items-center space-x-2"><Box size={18} className="text-blue-500" /><span>功能模块流水概览</span></h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-gray-50/50 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                    <th className="px-8 py-4">日期</th><th className="px-8 py-4">路径</th><th className="px-8 py-4">PV</th><th className="px-8 py-4">UV</th><th className="px-8 py-4">点数消耗</th>
+                    <th className="px-8 py-4 w-40">日期</th>
+                    <th className="px-8 py-4">路径</th>
+                    <th className="px-8 py-4">PV</th>
+                    <th className="px-8 py-4">UV</th>
+                    <th className="px-8 py-4">点数消耗</th>
+                    <th className="px-8 py-4 w-16"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {sortedModuleSummary.map((row, idx) => {
-                    const labels = getModuleLabels(row.mode);
+                  {allDates.map((date) => {
+                    const dayLog = filteredLogs.find(l => l.date === date);
+                    const modes = [AppMode.TEXT, AppMode.IMAGE, AppMode.VIDEO];
+                    
+                    let dayTotalPv = 0;
+                    let dayTotalPoints = 0;
+                    const dayUvSet = new Set();
+                    
+                    const modeStats = modes.map(mode => {
+                      let pv = 0, points = 0, uvCount = 0;
+                      if (dayLog) {
+                        const modeUvSet = new Set();
+                        Object.entries(dayLog.users).forEach(([uid, mStats]) => {
+                          const stat = mStats[mode];
+                          if (stat && (stat.pv > 0 || stat.points > 0)) {
+                            pv += stat.pv;
+                            points += stat.points;
+                            modeUvSet.add(uid);
+                            dayUvSet.add(uid);
+                          }
+                        });
+                        uvCount = modeUvSet.size;
+                      }
+                      dayTotalPv += pv;
+                      dayTotalPoints += points;
+                      return { mode, pv, points, uvCount };
+                    });
+
+                    const isExpanded = expandedOverview.has(date);
+                    const hasActivity = dayTotalPv > 0;
+
                     return (
-                      <tr key={idx} className="group hover:bg-gray-50/50 transition-colors">
-                        <td className="px-8 py-4 text-xs font-medium text-gray-500">{row.date}</td>
-                        <td className="px-8 py-4">
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-gray-400 font-bold uppercase">{labels.level1}</span>
-                            <span className="text-xs font-bold text-gray-800">{labels.level2}</span>
-                          </div>
-                        </td>
-                        <td className="px-8 py-4 text-xs font-bold text-gray-800">{row.pv}</td>
-                        <td className="px-8 py-4 text-xs font-bold text-gray-800">{row.uvCount}</td>
-                        <td className="px-8 py-4 text-xs text-blue-600 font-bold">{row.points.toLocaleString()}</td>
-                      </tr>
+                      <React.Fragment key={date}>
+                        <tr 
+                          className={`group transition-colors ${hasActivity ? 'hover:bg-gray-50/80 cursor-pointer' : 'opacity-50'}`}
+                          onClick={() => hasActivity && toggleExpandOverview(date)}
+                        >
+                          <td className="px-8 py-5 text-xs font-medium text-gray-500">{date}</td>
+                          <td className="px-8 py-5">
+                            <div className="flex flex-col">
+                              <span className="text-xs font-bold text-gray-800">AI创意</span>
+                              <span className="text-[9px] text-gray-400 font-bold uppercase">PRIMARY MODULE</span>
+                            </div>
+                          </td>
+                          <td className="px-8 py-5 text-xs font-bold text-gray-800">{dayTotalPv || '-'}</td>
+                          <td className="px-8 py-5 text-xs font-bold text-gray-800">{dayUvSet.size || '-'}</td>
+                          <td className={`px-8 py-5 text-xs font-bold ${dayTotalPoints > 0 ? 'text-blue-600' : 'text-gray-300'}`}>{dayTotalPoints > 0 ? dayTotalPoints.toLocaleString() : '-'}</td>
+                          <td className="px-8 py-5 text-center">
+                            {hasActivity && (
+                              isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded && modeStats.map((ms, idx) => (
+                          <tr key={`${date}-${ms.mode}`} className="bg-blue-50/20 border-l-4 border-l-blue-500/30">
+                            <td className="px-8 py-3"></td>
+                            <td className="px-8 py-3">
+                              <div className="flex items-center space-x-2 pl-4">
+                                <div className="w-1 h-1 rounded-full bg-blue-400"></div>
+                                <span className="text-xs font-medium text-gray-600">{getModuleLabels(ms.mode).level2}</span>
+                              </div>
+                            </td>
+                            <td className="px-8 py-3 text-xs text-gray-500">{ms.pv || '-'}</td>
+                            <td className="px-8 py-3 text-xs text-gray-500">{ms.uvCount || '-'}</td>
+                            <td className="px-8 py-3 text-xs text-gray-400 font-medium">{ms.points > 0 ? ms.points.toLocaleString() : '-'}</td>
+                            <td></td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -513,41 +581,86 @@ const App: React.FC = () => {
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden animate-in fade-in slide-in-from-left-4 duration-300">
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/30">
+          <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-gray-100 bg-gray-50/30 flex items-center justify-between">
               <h3 className="font-bold text-gray-800 flex items-center space-x-2"><Users size={18} className="text-indigo-500" /><span>用户审计明细</span></h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-gray-50/50 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                    <th className="px-8 py-4">日期</th><th className="px-8 py-4">用户名</th><th className="px-8 py-4">路径</th><th className="px-8 py-4">PV</th><th className="px-8 py-4">消耗</th>
+                    <th className="px-8 py-4 w-40">日期</th>
+                    <th className="px-8 py-4">用户名</th>
+                    <th className="px-8 py-4">总 PV</th>
+                    <th className="px-8 py-4">总消耗</th>
+                    <th className="px-8 py-4 w-16"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {sortedUserSummary.map((row, idx) => {
-                    const labels = getModuleLabels(row.mode);
-                    return (
-                      <tr key={idx} className="group hover:bg-gray-50/50 transition-colors">
-                        <td className="px-8 py-4 text-xs font-medium text-gray-500">{row.date}</td>
-                        <td className="px-8 py-4 text-xs font-bold text-gray-800">
-                          <div className="flex items-center space-x-2">
-                            <div className="w-6 h-6 rounded-lg bg-gray-100 flex items-center justify-center text-[10px]">{row.userId.charAt(0)}</div>
-                            <span>{row.userId}</span>
-                            {userActiveDays[row.userId]?.size > 9 && <span className="text-[8px] bg-blue-100 text-blue-600 px-1 rounded font-bold">MAU</span>}
-                          </div>
-                        </td>
-                        <td className="px-8 py-4">
-                          <div className="flex items-center space-x-1">
-                            <span className="text-[10px] text-gray-400 font-bold uppercase">{labels.level1}</span>
-                            <ChevronRight size={10} className="text-gray-300" />
-                            <span className="text-[10px] font-bold uppercase text-gray-600">{labels.level2}</span>
-                          </div>
-                        </td>
-                        <td className="px-8 py-4 text-xs text-gray-600">{row.pv}</td>
-                        <td className="px-8 py-4 text-xs text-blue-600 font-bold">{row.points.toLocaleString()}</td>
-                      </tr>
-                    );
+                  {allDates.map((date) => {
+                    const dayLog = filteredLogs.find(l => l.date === date);
+                    const dayUsers = dayLog ? Object.entries(dayLog.users) : [];
+
+                    if (dayUsers.length === 0) {
+                      return (
+                        <tr key={date} className="opacity-40">
+                          <td className="px-8 py-5 text-xs font-medium text-gray-500">{date}</td>
+                          <td colSpan={4} className="px-8 py-5 text-xs text-gray-300 italic">当日无活跃记录</td>
+                        </tr>
+                      );
+                    }
+
+                    return dayUsers.map(([uId, modes]) => {
+                      const expandKey = `${date}-${uId}`;
+                      const isExpanded = expandedAudit.has(expandKey);
+                      
+                      let userDayPv = 0;
+                      let userDayPoints = 0;
+                      const userModeLogs = Object.entries(modes as UserDailyStat).filter(([_, s]) => s.pv > 0 || s.points > 0).map(([m, s]) => {
+                        userDayPv += s.pv;
+                        userDayPoints += s.points;
+                        return { mode: m as AppMode, pv: s.pv, points: s.points };
+                      });
+
+                      return (
+                        <React.Fragment key={expandKey}>
+                          <tr 
+                            className="group hover:bg-gray-50/80 transition-colors cursor-pointer"
+                            onClick={() => toggleExpandAudit(expandKey)}
+                          >
+                            <td className="px-8 py-5 text-xs font-medium text-gray-500">{date}</td>
+                            <td className="px-8 py-5">
+                              <div className="flex items-center space-x-2">
+                                <div className="w-6 h-6 rounded-lg bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-500">{uId.charAt(0)}</div>
+                                <span className="text-xs font-bold text-gray-800">{uId}</span>
+                                {userActiveDays[uId]?.size > 9 && <span className="text-[8px] bg-blue-100 text-blue-600 px-1 rounded font-bold">MAU</span>}
+                              </div>
+                            </td>
+                            <td className="px-8 py-5 text-xs text-gray-600 font-bold">{userDayPv}</td>
+                            <td className="px-8 py-5 text-xs text-blue-600 font-bold">{userDayPoints.toLocaleString()}</td>
+                            <td className="px-8 py-5 text-center">
+                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                            </td>
+                          </tr>
+                          {isExpanded && userModeLogs.map((log) => (
+                            <tr key={`${expandKey}-${log.mode}`} className="bg-indigo-50/20 border-l-4 border-l-indigo-500/30">
+                              <td className="px-8 py-3"></td>
+                              <td className="px-8 py-3">
+                                <div className="flex items-center space-x-2">
+                                  <div className="w-1 h-1 rounded-full bg-indigo-400"></div>
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase">AI创意</span>
+                                  <ChevronRight size={10} className="text-gray-300" />
+                                  <span className="text-[10px] font-bold uppercase text-gray-600">{getModuleLabels(log.mode).level2}</span>
+                                </div>
+                              </td>
+                              <td className="px-8 py-3 text-[10px] text-gray-500">{log.pv}</td>
+                              <td className="px-8 py-3 text-[10px] text-indigo-400 font-bold">{log.points.toLocaleString()}</td>
+                              <td></td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      );
+                    });
                   })}
                 </tbody>
               </table>
