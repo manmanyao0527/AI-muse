@@ -1,13 +1,12 @@
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   MessageSquare, 
   ImageIcon, 
   VideoIcon, 
   Plus, 
-  Search, 
   Settings2, 
   Paperclip, 
-  Maximize2, 
   Send, 
   User, 
   Layers, 
@@ -1333,9 +1332,6 @@ const App: React.FC = () => {
                {activeView === 'logs' ? <MessageSquare size={16} /> : <LayoutDashboard size={16} />}
                <span>{activeView === 'logs' ? '返回创作' : '系统日志'}</span>
              </button>
-             <div className="w-px h-6 bg-gray-200 mx-1"></div>
-             <button className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors"><Search size={18} /></button>
-             <button className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors"><Maximize2 size={18} /></button>
           </div>
         </header>
 
@@ -1589,3 +1585,4 @@ const App: React.FC = () => {
 };
 
 export default App;
+    
