@@ -10,6 +10,7 @@ export interface Message {
   role: 'user' | 'assistant';
   content?: string;
   resultUrl?: string;
+  resultType?: AppMode; // Added to track result type
   attachments?: { name: string; type: string; url?: string }[];
   timestamp: number;
   feedback?: 'like' | 'dislike' | null;

@@ -27,6 +27,9 @@ export class AIService {
 
   async generateText(prompt: string, model: string) {
     try {
+      if (!process.env.API_KEY) {
+        throw new Error("API Key not found in environment");
+      }
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: model || 'gemini-3-flash-preview',
@@ -41,6 +44,9 @@ export class AIService {
 
   async generateImage(prompt: string, model: string, aspectRatio: string = '1:1', previousImageUrl?: string) {
     try {
+      if (!process.env.API_KEY) {
+         throw new Error("API Key not found in environment");
+      }
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const parts: any[] = [{ text: prompt }];
 

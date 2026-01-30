@@ -27,7 +27,7 @@ import {
   FileText, 
   Music, 
   FileSpreadsheet, 
-  File,
+  File as FileIcon,
   ArrowRight,
   Eye,
   Maximize,
@@ -37,7 +37,9 @@ import {
   ThumbsUp,
   ThumbsDown,
   Check,
-  AlertCircle
+  AlertCircle,
+  Wand2,
+  Film
 } from 'lucide-react';
 import { AppMode, DialogueSession, Message, AppConfig, CaseItem, DateLog, UserDailyStat } from './types';
 import { DAILY_TOKEN_LIMIT, MODELS, IMAGE_RATIOS, IMAGE_SIZES, VIDEO_RATIOS, VIDEO_DURATIONS, VIDEO_RESOLUTIONS, STYLES, CASES } from './constants';
@@ -50,7 +52,7 @@ const getFileIconInternal = (type: string, name: string) => {
   if (type.includes('audio') || type.includes('mp3')) return <Music size={20} className="text-purple-500" />;
   if (type.includes('excel') || type.includes('spreadsheet') || name.endsWith('.xls') || name.endsWith('.xlsx')) return <FileSpreadsheet size={20} className="text-green-500" />;
   if (type.includes('word') || name.endsWith('.doc') || name.endsWith('.docx')) return <FileText size={20} className="text-blue-600" />;
-  return <File size={20} className="text-gray-500" />;
+  return <FileIcon size={20} className="text-gray-500" />;
 };
 
 // Component for file thumbnails in the input area
@@ -202,6 +204,54 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sessions, activeSessionId, isGenerating, activeView]);
 
+  const showToast = (message: string, type: 'success' | 'info' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  // Helper to convert URL to File
+  const convertUrlToFile = async (url: string, filename: string): Promise<File | null> => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      return new File([blob], filename, { type: blob.type });
+    } catch (error) {
+      console.error("File conversion failed", error);
+      showToast("图片处理失败，请重试", "info");
+      return null;
+    }
+  };
+
+  const handleImagePolish = async (url: string) => {
+    const file = await convertUrlToFile(url, `polish_${Date.now()}.png`);
+    if (file) {
+      setActiveMode(AppMode.IMAGE);
+      setConfig(prev => ({
+        ...prev,
+        model: MODELS.image[0].value,
+        modelLabel: MODELS.image[0].label,
+        refImages: [...(prev.refImages || []), file]
+      }));
+      showToast("已切换至图片润色模式");
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  };
+
+  const handleImageToVideo = async (url: string) => {
+    const file = await convertUrlToFile(url, `frame_${Date.now()}.png`);
+    if (file) {
+      setActiveMode(AppMode.VIDEO);
+      setConfig(prev => ({
+        ...prev,
+        model: MODELS.video[0].value,
+        modelLabel: MODELS.video[0].label,
+        videoFirstFrame: file
+      }));
+      showToast("已切换至图生视频模式");
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  };
+
   const switchMode = (mode: AppMode) => {
     setActiveView('chat');
     const newMode = (activeMode === mode) ? AppMode.TEXT : mode;
@@ -266,11 +316,6 @@ const App: React.FC = () => {
 
   const currentSession = sessions.find(s => s.id === activeSessionId);
 
-  const showToast = (message: string, type: 'success' | 'info' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  };
-
   const handleSubmit = async (overridePrompt?: string) => {
     const prompt = overridePrompt || inputPrompt;
     const currentAttachments = config.attachments || [];
@@ -284,13 +329,14 @@ const App: React.FC = () => {
 
     if (!prompt.trim() && currentAttachments.length === 0 && currentRefImages.length === 0 && !config.videoFirstFrame && !config.videoLastFrame && !overridePrompt || isGenerating) return;
 
-    const isVeoModel = config.model.includes('veo');
-    const isProImageModel = config.model === 'gemini-3-pro-image-preview';
-
-    if (isVeoModel || isProImageModel) {
-      const aistudio = (window as any).aistudio;
-      if (aistudio && !(await aistudio.hasSelectedApiKey())) {
+    // FIX: Check for API Key via aistudio helper for ALL models if available, not just Veo/Pro
+    const aistudio = (window as any).aistudio;
+    if (aistudio && !(await aistudio.hasSelectedApiKey())) {
+      try {
         await aistudio.openSelectKey();
+      } catch (e) {
+        console.error("Failed to select API key", e);
+        return; // Stop if key selection fails or is cancelled
       }
     }
 
@@ -392,6 +438,7 @@ const App: React.FC = () => {
         role: 'assistant',
         content: result,
         resultUrl: resultUrl,
+        resultType: activeMode, // Explicitly save the type
         timestamp: Date.now(),
         ratio: (activeMode === AppMode.IMAGE || activeMode === AppMode.VIDEO) ? config.ratio : undefined
       };
@@ -787,7 +834,23 @@ const App: React.FC = () => {
                 {MODELS[activeMode === AppMode.TEXT ? 'text' : (activeMode === AppMode.IMAGE ? 'image' : 'video')].map(m => (
                   <button 
                     key={m.label + m.value}
-                    onClick={() => { setConfig({...config, model: m.value, modelLabel: m.label}); setActiveDropdown(null); }}
+                    onClick={() => { 
+                      if (m.value === config.model) {
+                         setActiveDropdown(null);
+                         return;
+                      }
+                      if (activeMode === AppMode.TEXT && currentSession && currentSession.messages.length > 0) {
+                        if (window.confirm("切换模型，可能会丢失之前对话信息")) {
+                           setConfig({...config, model: m.value, modelLabel: m.label});
+                           setActiveDropdown(null);
+                        } else {
+                           setActiveDropdown(null);
+                        }
+                      } else {
+                        setConfig({...config, model: m.value, modelLabel: m.label});
+                        setActiveDropdown(null);
+                      }
+                    }}
                     className={`w-full text-left px-4 py-2 text-xs hover:bg-blue-50 transition-colors ${config.modelLabel === m.label ? 'text-blue-600 font-bold' : 'text-gray-600'}`}
                   >
                     {m.label}
@@ -1076,7 +1139,7 @@ const App: React.FC = () => {
                             <td className="px-8 py-5 text-xs text-gray-600 font-bold">{userDayPv}</td>
                             <td className="px-8 py-5 text-xs text-blue-600 font-bold">{userDayPoints.toLocaleString()}</td>
                             <td className="px-8 py-5 text-center">
-                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                              {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />
                             </td>
                           </tr>
                           {isExpanded && userModeLogs.map((log) => (
@@ -1379,16 +1442,36 @@ const App: React.FC = () => {
                           <div className={`rounded-2xl overflow-hidden shadow-sm bg-white group/result relative transition-all ${msg.ratio && (msg.ratio === '9:16' || msg.ratio === '3:4') ? 'max-w-[320px]' : (msg.ratio === '1:1' ? 'max-w-[400px]' : 'max-w-2xl')}`}>
                             {msg.ratio ? (
                               <div style={{ aspectRatio: msg.ratio.replace(':', '/') }} className="w-full bg-gray-100">
-                                {activeMode === AppMode.VIDEO ? (
+                                { (msg.resultType === AppMode.VIDEO || (!msg.resultType && !msg.resultUrl?.startsWith('data:image') && !msg.resultUrl?.includes('images.unsplash') && !msg.resultUrl?.includes('picsum') && activeMode === AppMode.VIDEO)) ? (
                                   <video src={msg.resultUrl} controls className="w-full h-full object-cover" />
                                 ) : (
                                   <img src={msg.resultUrl} alt="Result" className="w-full h-full object-cover" />
                                 )}
                               </div>
                             ) : (
-                               activeMode === AppMode.VIDEO ? <video src={msg.resultUrl} controls className="w-full max-h-[500px]" /> : <img src={msg.resultUrl} alt="Result" className="w-full max-h-[500px] object-contain" />
+                               (msg.resultType === AppMode.VIDEO || (!msg.resultType && !msg.resultUrl?.startsWith('data:image') && !msg.resultUrl?.includes('images.unsplash') && !msg.resultUrl?.includes('picsum') && activeMode === AppMode.VIDEO)) ? <video src={msg.resultUrl} controls className="w-full max-h-[500px]" /> : <img src={msg.resultUrl} alt="Result" className="w-full max-h-[500px] object-contain" />
                             )}
                             
+                            {/* NEW: Image Action Buttons (Polish / ToVideo) */}
+                            {(activeMode === AppMode.IMAGE || (msg.resultType === AppMode.IMAGE) || (!msg.resultType && msg.resultUrl?.startsWith('data:image'))) && !((msg.resultType === AppMode.VIDEO) || (!msg.resultType && activeMode === AppMode.VIDEO && !msg.resultUrl?.startsWith('data:image'))) && (
+                                <div className="absolute bottom-3 right-3 flex items-center space-x-2 z-20">
+                                  <button 
+                                    onClick={() => handleImagePolish(msg.resultUrl!)}
+                                    className="px-3 py-1.5 bg-black/60 hover:bg-black/80 text-white text-[10px] rounded-full backdrop-blur-md transition-colors border border-white/20 flex items-center space-x-1 font-medium"
+                                  >
+                                    <Wand2 size={10} />
+                                    <span>图片润色</span>
+                                  </button>
+                                  <button 
+                                    onClick={() => handleImageToVideo(msg.resultUrl!)}
+                                    className="px-3 py-1.5 bg-black/60 hover:bg-black/80 text-white text-[10px] rounded-full backdrop-blur-md transition-colors border border-white/20 flex items-center space-x-1 font-medium"
+                                  >
+                                    <Film size={10} />
+                                    <span>图生视频</span>
+                                  </button>
+                                </div>
+                            )}
+
                             {/* Result Hover Actions */}
                             <div className="absolute top-4 right-4 flex space-x-2 opacity-0 group-hover/result:opacity-100 transition-opacity z-10">
                                <button 
@@ -1396,8 +1479,8 @@ const App: React.FC = () => {
                                     if (msg.resultUrl) {
                                       setPreviewContent({ 
                                         url: msg.resultUrl, 
-                                        name: activeMode === AppMode.VIDEO ? '生成视频' : '生成图片', 
-                                        type: activeMode === AppMode.VIDEO ? 'video/mp4' : 'image/png' 
+                                        name: (msg.resultType === AppMode.VIDEO || (!msg.resultType && activeMode === AppMode.VIDEO && !msg.resultUrl?.startsWith('data:image'))) ? '生成视频' : '生成图片', 
+                                        type: (msg.resultType === AppMode.VIDEO || (!msg.resultType && activeMode === AppMode.VIDEO && !msg.resultUrl?.startsWith('data:image'))) ? 'video/mp4' : 'image/png' 
                                       });
                                     }
                                  }}
@@ -1407,7 +1490,7 @@ const App: React.FC = () => {
                                  <Eye size={16} className="text-gray-700" />
                                </button>
                                <button 
-                                 onClick={() => downloadFile(msg.resultUrl!, `result-${Date.now()}.${activeMode === AppMode.VIDEO ? 'mp4' : 'png'}`)}
+                                 onClick={() => downloadFile(msg.resultUrl!, `result-${Date.now()}.${(msg.resultType === AppMode.VIDEO || (!msg.resultType && activeMode === AppMode.VIDEO && !msg.resultUrl?.startsWith('data:image'))) ? 'mp4' : 'png'}`)}
                                  className="p-2 bg-white/80 backdrop-blur rounded-lg shadow-sm hover:bg-white transition-colors"
                                  title="下载到本地"
                                >
