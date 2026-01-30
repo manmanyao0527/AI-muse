@@ -10,7 +10,10 @@ export interface Message {
   role: 'user' | 'assistant';
   content?: string;
   resultUrl?: string;
+  attachments?: { name: string; type: string; url?: string }[];
   timestamp: number;
+  feedback?: 'like' | 'dislike' | null;
+  ratio?: string;
 }
 
 export interface DialogueSession {
@@ -24,10 +27,16 @@ export interface DialogueSession {
 
 export interface AppConfig {
   model: string;
+  modelLabel?: string;
   ratio?: string;
   style?: string;
   duration?: string;
+  imageSize?: string;
+  videoResolution?: string;
   attachments?: File[];
+  refImages?: File[];
+  videoFirstFrame?: File | null;
+  videoLastFrame?: File | null;
   refImage?: File | null;
   refVideo?: File | null;
 }

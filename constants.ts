@@ -1,17 +1,33 @@
-
 import { AppMode, CaseItem } from './types';
 
 export const DAILY_TOKEN_LIMIT = 50000;
 
-export const MODELS = {
-  text: ['gemini-3-flash-preview', 'gemini-3-pro-preview'],
-  image: ['gemini-2.5-flash-image', 'gemini-3-pro-image-preview'],
-  video: ['veo-3.1-fast-generate-preview', 'veo-3.1-generate-preview']
+export interface ModelOption {
+  label: string;
+  value: string;
+}
+
+export const MODELS: Record<string, ModelOption[]> = {
+  text: [
+    { label: '豆包', value: 'gemini-3-flash-preview' },
+    { label: 'Gemini 3 Flash Preview', value: 'gemini-3-flash-preview' },
+    { label: 'Gemini 3 pro Preview', value: 'gemini-3-pro-preview' }
+  ],
+  image: [
+    { label: '豆包', value: 'gemini-2.5-flash-image' },
+    { label: 'Nano Banana', value: 'gemini-2.5-flash-image' }
+  ],
+  video: [
+    { label: 'seedance 1.0 Pro', value: 'veo-3.1-fast-generate-preview' },
+    { label: 'seedance 1.5 Pro', value: 'veo-3.1-generate-preview' }
+  ]
 };
 
-export const IMAGE_RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16'];
-export const VIDEO_RATIOS = ['9:16', '16:9'];
-export const VIDEO_DURATIONS = ['3-5s'];
+export const IMAGE_RATIOS = ['9:16', '16:9', '4:3', '3:4', '1:1', '21:9'];
+export const IMAGE_SIZES = ['1K', '2K', '3K'];
+export const VIDEO_RATIOS = ['9:16', '16:9', '4:3', '3:4', '1:1', '21:9'];
+export const VIDEO_DURATIONS = ['3s', '5s'];
+export const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p'];
 export const RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9'];
 export const STYLES = ['自然', '写实', '插画', '3D渲染', '赛博朋克', '中国风'];
 
@@ -78,7 +94,7 @@ export const CASES: CaseItem[] = [
     type: AppMode.VIDEO, 
     title: '图生视频', 
     description: '静态图一键转化为电影感短片', 
-    prompt: '基于这张静态图片，生成一段航拍视角的动态视频。', 
+    prompt: '基于这张静态图片，生成一段航拍视高的动态视频。', 
     icon: '🎞️',
     previewUrl: 'https://assets.mixkit.co/videos/preview/mixkit-clouds-and-blue-sky-background-2422-large.mp4'
   }

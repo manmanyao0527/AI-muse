@@ -4,30 +4,92 @@ import {
   ImageIcon, 
   VideoIcon, 
   Plus, 
-  Search,
-  Settings2,
-  Paperclip,
-  Maximize2,
-  Send,
-  User,
-  Layers,
-  Sparkles,
-  X,
-  RefreshCw,
-  Download,
-  ChevronRight,
-  ChevronDown,
-  LayoutDashboard,
-  Calendar,
-  Activity,
-  Users,
-  Box,
-  TrendingUp,
-  ChevronUp
+  Search, 
+  Settings2, 
+  Paperclip, 
+  Maximize2, 
+  Send, 
+  User, 
+  Layers, 
+  Sparkles, 
+  X, 
+  RefreshCw, 
+  Download, 
+  ChevronRight, 
+  ChevronDown, 
+  LayoutDashboard, 
+  Calendar, 
+  Activity, 
+  Users, 
+  Box, 
+  TrendingUp, 
+  ChevronUp, 
+  FileText, 
+  Music, 
+  FileSpreadsheet, 
+  File,
+  ArrowRight,
+  Eye,
+  Maximize,
+  Clock,
+  Monitor,
+  Copy,
+  ThumbsUp,
+  ThumbsDown,
+  Check,
+  AlertCircle
 } from 'lucide-react';
 import { AppMode, DialogueSession, Message, AppConfig, CaseItem, DateLog, UserDailyStat } from './types';
-import { DAILY_TOKEN_LIMIT, MODELS, IMAGE_RATIOS, VIDEO_RATIOS, VIDEO_DURATIONS, STYLES, CASES } from './constants';
+import { DAILY_TOKEN_LIMIT, MODELS, IMAGE_RATIOS, IMAGE_SIZES, VIDEO_RATIOS, VIDEO_DURATIONS, VIDEO_RESOLUTIONS, STYLES, CASES } from './constants';
 import { AIService } from './services/geminiService';
+
+// Utility to get file icons based on type/name
+const getFileIconInternal = (type: string, name: string) => {
+  if (type.startsWith('image/')) return <ImageIcon size={20} className="text-blue-500" />;
+  if (type.includes('pdf')) return <FileText size={20} className="text-red-500" />;
+  if (type.includes('audio') || type.includes('mp3')) return <Music size={20} className="text-purple-500" />;
+  if (type.includes('excel') || type.includes('spreadsheet') || name.endsWith('.xls') || name.endsWith('.xlsx')) return <FileSpreadsheet size={20} className="text-green-500" />;
+  if (type.includes('word') || name.endsWith('.doc') || name.endsWith('.docx')) return <FileText size={20} className="text-blue-600" />;
+  return <File size={20} className="text-gray-500" />;
+};
+
+// Component for file thumbnails in the input area
+const AttachmentThumbnail: React.FC<{ file: File; onRemove: () => void; onClick: (file: File) => void }> = React.memo(({ file, onRemove, onClick }) => {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      setPreviewUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+  }, [file]);
+
+  return (
+    <div 
+      className="relative group w-16 h-16 sm:w-20 sm:h-20 shrink-0 animate-in fade-in zoom-in-95 duration-200 cursor-pointer"
+      onClick={() => onClick(file)}
+    >
+      <div className="w-full h-full rounded-2xl overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center shadow-sm">
+        {previewUrl ? (
+          <img src={previewUrl} alt={file.name} className="w-full h-full object-cover" />
+        ) : (
+          <div className="flex flex-col items-center justify-center p-1">
+            {getFileIconInternal(file.type, file.name)}
+            <span className="text-[8px] text-gray-400 mt-1 truncate max-w-full px-1">{file.name}</span>
+          </div>
+        )}
+      </div>
+      <button 
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-white border border-gray-100 rounded-full flex items-center justify-center shadow-md text-gray-400 hover:text-red-500 transition-colors z-10 opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+});
 
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<'chat' | 'logs'>('chat');
@@ -39,7 +101,12 @@ const App: React.FC = () => {
   const [inputPrompt, setInputPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [logs, setLogs] = useState<DateLog[]>([]);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
   
+  // For file preview lightbox
+  const [previewContent, setPreviewContent] = useState<{ url: string; name: string; type: string } | null>(null);
+
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -49,19 +116,29 @@ const App: React.FC = () => {
   const [expandedAudit, setExpandedAudit] = useState<Set<string>>(new Set());
 
   const [config, setConfig] = useState<AppConfig>({
-    model: MODELS.text[0],
-    ratio: '1:1',
+    model: MODELS.text[0].value,
+    modelLabel: MODELS.text[0].label,
+    ratio: '9:16',
+    imageSize: '1K',
+    videoResolution: '480p',
     style: STYLES[0],
-    duration: VIDEO_DURATIONS[0],
+    duration: '3s',
     attachments: [],
+    refImages: [],
+    videoFirstFrame: null,
+    videoLastFrame: null,
     refImage: null,
     refVideo: null
   });
 
-  const [activeDropdown, setActiveDropdown] = useState<'ratio' | 'duration' | 'model' | 'style' | null>(null);
+  const [activeDropdown, setActiveDropdown] = useState<'ratio' | 'duration' | 'model' | 'size' | 'resolution' | 'frames' | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const refImgInputRef = useRef<HTMLInputElement>(null);
+  const videoFirstFrameRef = useRef<HTMLInputElement>(null);
+  const videoLastFrameRef = useRef<HTMLInputElement>(null);
 
   const userId = useMemo(() => {
     let id = localStorage.getItem('ai_user_id');
@@ -131,13 +208,29 @@ const App: React.FC = () => {
     setActiveMode(newMode);
     trackMetric(newMode, 'pv');
     
-    const defaultModel = newMode === AppMode.TEXT ? MODELS.text[0] : (newMode === AppMode.IMAGE ? MODELS.image[0] : MODELS.video[0]);
-    const defaultRatio = newMode === AppMode.VIDEO ? VIDEO_RATIOS[0] : IMAGE_RATIOS[0];
+    let defaultModel;
+    if (newMode === AppMode.TEXT) {
+      defaultModel = MODELS.text[0]; 
+    } else if (newMode === AppMode.IMAGE) {
+      defaultModel = MODELS.image[0]; 
+    } else {
+      defaultModel = MODELS.video[0]; 
+    }
+
+    const defaultRatio = (newMode === AppMode.VIDEO || newMode === AppMode.IMAGE) ? '9:16' : '1:1';
     
     setConfig(prev => ({
       ...prev,
-      model: defaultModel,
+      model: defaultModel.value,
+      modelLabel: defaultModel.label,
       ratio: defaultRatio,
+      imageSize: '1K',
+      videoResolution: '480p',
+      duration: '3s',
+      attachments: [],
+      refImages: [],
+      videoFirstFrame: null,
+      videoLastFrame: null
     }));
     setActiveDropdown(null);
   };
@@ -148,11 +241,17 @@ const App: React.FC = () => {
     setActiveMode(AppMode.TEXT);
     setInputPrompt('');
     setConfig({
-      model: MODELS.text[0],
-      ratio: '1:1',
+      model: MODELS.text[0].value,
+      modelLabel: MODELS.text[0].label,
+      ratio: '9:16',
+      imageSize: '1K',
+      videoResolution: '480p',
       style: STYLES[0],
-      duration: VIDEO_DURATIONS[0],
+      duration: '3s',
       attachments: [],
+      refImages: [],
+      videoFirstFrame: null,
+      videoLastFrame: null,
       refImage: null,
       refVideo: null
     });
@@ -167,9 +266,23 @@ const App: React.FC = () => {
 
   const currentSession = sessions.find(s => s.id === activeSessionId);
 
+  const showToast = (message: string, type: 'success' | 'info' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
   const handleSubmit = async (overridePrompt?: string) => {
     const prompt = overridePrompt || inputPrompt;
-    if (!prompt.trim() || isGenerating) return;
+    const currentAttachments = config.attachments || [];
+    const currentRefImages = config.refImages || [];
+    
+    // Video mode mandatory check
+    if (activeMode === AppMode.VIDEO && !config.videoFirstFrame && !overridePrompt) {
+      showToast("图片未上传", "info");
+      return;
+    }
+
+    if (!prompt.trim() && currentAttachments.length === 0 && currentRefImages.length === 0 && !config.videoFirstFrame && !config.videoLastFrame && !overridePrompt || isGenerating) return;
 
     const isVeoModel = config.model.includes('veo');
     const isProImageModel = config.model === 'gemini-3-pro-image-preview';
@@ -181,7 +294,37 @@ const App: React.FC = () => {
       }
     }
 
+    const msgAttachments = [
+      ...currentAttachments.map(f => ({
+        name: f.name,
+        type: f.type,
+        url: URL.createObjectURL(f)
+      })),
+      ...currentRefImages.map(f => ({
+        name: `参考图: ${f.name}`,
+        type: f.type,
+        url: URL.createObjectURL(f)
+      }))
+    ];
+
+    if (config.videoFirstFrame) {
+      msgAttachments.push({
+        name: `首帧: ${config.videoFirstFrame.name}`,
+        type: config.videoFirstFrame.type,
+        url: URL.createObjectURL(config.videoFirstFrame)
+      });
+    }
+
+    if (config.videoLastFrame) {
+      msgAttachments.push({
+        name: `尾帧: ${config.videoLastFrame.name}`,
+        type: config.videoLastFrame.type,
+        url: URL.createObjectURL(config.videoLastFrame)
+      });
+    }
+
     setInputPrompt('');
+    setConfig(prev => ({ ...prev, attachments: [], refImages: [], videoFirstFrame: null, videoLastFrame: null })); 
     setIsGenerating(true);
     
     let sessionId = activeSessionId;
@@ -192,9 +335,9 @@ const App: React.FC = () => {
       const newSession: DialogueSession = {
         id: sessionId,
         mode: activeMode,
-        title: prompt.slice(0, 30),
+        title: prompt.slice(0, 30) || '对话 ' + new Date().toLocaleTimeString(),
         messages: [],
-        params: { ...config },
+        params: { ...config, attachments: [], refImages: [], videoFirstFrame: null, videoLastFrame: null },
         timestamp: Date.now()
       };
       updatedSessions = [newSession, ...updatedSessions];
@@ -202,7 +345,13 @@ const App: React.FC = () => {
     }
 
     const sessionIndex = updatedSessions.findIndex(s => s.id === sessionId);
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: prompt, timestamp: Date.now() };
+    const userMsg: Message = { 
+      id: Date.now().toString(), 
+      role: 'user', 
+      content: prompt, 
+      attachments: msgAttachments,
+      timestamp: Date.now() 
+    };
     updatedSessions[sessionIndex].messages.push(userMsg);
     updatedSessions[sessionIndex].mode = activeMode;
     setSessions(updatedSessions);
@@ -219,11 +368,18 @@ const App: React.FC = () => {
         result = (await service.generateText(prompt, config.model)) || '';
         pointCost = 500;
       } else if (activeMode === AppMode.IMAGE) {
-        const url = await service.generateImage(prompt, config.model, config.ratio || '1:1', lastResultUrl || undefined);
-        resultUrl = url || 'https://picsum.photos/800/600';
+        const url = await service.generateImage(prompt, config.model, config.ratio || '9:16', lastResultUrl || undefined);
+        resultUrl = url || 'https://picsum.photos/800/1422';
         pointCost = 2500;
       } else {
-        const url = await service.generateVideo(prompt, config.model, config.ratio || '16:9');
+        const url = await service.generateVideo(
+          prompt, 
+          config.model, 
+          config.ratio || '9:16', 
+          config.videoResolution || '480p',
+          config.videoFirstFrame,
+          config.videoLastFrame
+        );
         resultUrl = url || 'https://picsum.photos/800/600'; 
         pointCost = 5000;
       }
@@ -236,7 +392,8 @@ const App: React.FC = () => {
         role: 'assistant',
         content: result,
         resultUrl: resultUrl,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ratio: (activeMode === AppMode.IMAGE || activeMode === AppMode.VIDEO) ? config.ratio : undefined
       };
 
       updatedSessions[sessionIndex].messages.push(aiMsg);
@@ -256,8 +413,104 @@ const App: React.FC = () => {
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  const toggleDropdown = (dropdown: 'ratio' | 'duration' | 'model' | 'style') => {
+  const toggleDropdown = (dropdown: 'ratio' | 'duration' | 'model' | 'size' | 'resolution' | 'frames') => {
     setActiveDropdown(prev => prev === dropdown ? null : dropdown);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'attachments' | 'refImages' | 'videoFirstFrame' | 'videoLastFrame') => {
+    if (e.target.files && e.target.files[0]) {
+      if (field === 'videoFirstFrame' || field === 'videoLastFrame') {
+        setConfig(prev => ({ ...prev, [field]: e.target.files![0] }));
+        return;
+      }
+
+      const current = config[field] as File[] || [];
+      const newFiles = Array.from(e.target.files);
+      
+      if (current.length + newFiles.length > 10) {
+        alert('最多支持上传 10 个文件');
+        const allowedNewCount = 10 - current.length;
+        if (allowedNewCount > 0) {
+          setConfig(prev => ({
+            ...prev,
+            [field]: [...(prev[field] as File[] || []), ...newFiles.slice(0, allowedNewCount)]
+          }));
+        }
+      } else {
+        setConfig(prev => ({
+          ...prev,
+          [field]: [...(prev[field] as File[] || []), ...newFiles]
+        }));
+      }
+    }
+  };
+
+  const removeFile = (index: number, field: 'attachments' | 'refImages' | 'videoFirstFrame' | 'videoLastFrame') => {
+    if (field === 'videoFirstFrame' || field === 'videoLastFrame') {
+       setConfig(prev => ({ ...prev, [field]: null }));
+       return;
+    }
+    setConfig(prev => ({
+      ...prev,
+      [field]: (prev[field] as File[] || []).filter((_, i) => i !== index)
+    }));
+  };
+
+  const downloadFile = (url: string, name: string) => {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast(`${name} 下载成功`);
+  };
+
+  const handleAttachmentClick = (att: { name: string; type: string; url?: string }) => {
+    if (att.url) {
+      setPreviewContent({ url: att.url, name: att.name, type: att.type });
+    }
+  };
+
+  const handleThumbnailClick = (file: File) => {
+    const url = URL.createObjectURL(file);
+    setPreviewContent({ url, name: file.name, type: file.type });
+  };
+
+  const handleCopyText = (text: string, msgId: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyStatus(msgId);
+      setTimeout(() => setCopyStatus(null), 2000);
+    });
+  };
+
+  const handleFeedback = (msgId: string, type: 'like' | 'dislike') => {
+    setSessions(prevSessions => {
+      const newSessions = [...prevSessions];
+      const sessionIndex = newSessions.findIndex(s => s.id === activeSessionId);
+      if (sessionIndex === -1) return prevSessions;
+
+      const session = { ...newSessions[sessionIndex] };
+      const msgIndex = session.messages.findIndex(m => m.id === msgId);
+      if (msgIndex === -1) return prevSessions;
+
+      const msg = { ...session.messages[msgIndex] };
+      
+      // Toggle feedback
+      if (msg.feedback === type) {
+        msg.feedback = null;
+      } else {
+        msg.feedback = type;
+        // If switching, the other type is automatically unset because feedback is a single property 'like' | 'dislike' | null
+      }
+
+      session.messages = [...session.messages];
+      session.messages[msgIndex] = msg;
+      newSessions[sessionIndex] = session;
+      
+      localStorage.setItem('ai_creative_sessions', JSON.stringify(newSessions));
+      return newSessions;
+    });
   };
 
   const landingCases = activeMode === AppMode.TEXT ? [] : CASES.filter(c => c.type === activeMode);
@@ -268,52 +521,80 @@ const App: React.FC = () => {
       [AppMode.IMAGE]: '图片生成',
       [AppMode.VIDEO]: '视频生成'
     };
-    return { level1: 'AI创意', level2: mapping[mode] || mode };
+    return { level1: 'AI小禹', level2: mapping[mode] || mode };
   };
 
   const renderInputArea = () => (
-    <div className="bg-white rounded-[32px] shadow-[0_20px_50px_rgba(0,0,0,0.1)] border border-gray-100 p-2 transform transition-all hover:shadow-[0_25px_60px_rgba(0,0,0,0.12)] focus-within:ring-2 focus-within:ring-blue-100 relative w-full">
+    <div ref={dropdownRef} className="bg-white rounded-[32px] shadow-[0_20px_50px_rgba(0,0,0,0.1)] border border-gray-100 p-2 transform transition-all hover:shadow-[0_25px_60px_rgba(0,0,0,0.12)] focus-within:ring-2 focus-within:ring-blue-100 relative w-full">
       <div className="flex flex-col">
+        {/* File Preview Area */}
+        {(config.attachments?.length || 0) + (config.refImages?.length || 0) + (config.videoFirstFrame ? 1 : 0) + (config.videoLastFrame ? 1 : 0) > 0 && (
+          <div className="px-4 pt-4 pb-2 animate-in slide-in-from-top-2 duration-300">
+            <div className="flex flex-wrap items-center gap-3">
+              {(config.attachments || []).map((file, idx) => (
+                <AttachmentThumbnail 
+                  key={`att-${idx}`} 
+                  file={file} 
+                  onRemove={() => removeFile(idx, 'attachments')} 
+                  onClick={handleThumbnailClick}
+                />
+              ))}
+              {(config.refImages || []).map((file, idx) => (
+                <div key={`ref-${idx}`} className="relative">
+                  <AttachmentThumbnail 
+                    file={file} 
+                    onRemove={() => removeFile(idx, 'refImages')} 
+                    onClick={handleThumbnailClick}
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-blue-600/80 text-[8px] text-white text-center rounded-b-2xl font-bold py-0.5">参考图</div>
+                </div>
+              ))}
+              {config.videoFirstFrame && (
+                <div className="relative">
+                  <AttachmentThumbnail 
+                    file={config.videoFirstFrame} 
+                    onRemove={() => removeFile(0, 'videoFirstFrame')} 
+                    onClick={handleThumbnailClick}
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-indigo-600/80 text-[8px] text-white text-center rounded-b-2xl font-bold py-0.5">首帧</div>
+                </div>
+              )}
+              {config.videoLastFrame && (
+                <div className="relative">
+                  <AttachmentThumbnail 
+                    file={config.videoLastFrame} 
+                    onRemove={() => removeFile(0, 'videoLastFrame')} 
+                    onClick={handleThumbnailClick}
+                  />
+                  <div className="absolute bottom-0 left-0 right-0 bg-purple-600/80 text-[8px] text-white text-center rounded-b-2xl font-bold py-0.5">尾帧</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <textarea 
           ref={inputRef}
           value={inputPrompt}
           onChange={(e) => setInputPrompt(e.target.value)}
+          onFocus={() => setActiveDropdown(null)}
+          onClick={() => setActiveDropdown(null)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               handleSubmit();
             }
           }}
-          placeholder={activeMode === AppMode.TEXT ? "发消息、输入“@”引用或输入指令..." : (activeMode === AppMode.IMAGE ? "描述图片设计方案..." : "描述视频创作内容...")}
-          className="w-full h-20 sm:h-24 resize-none text-base sm:text-lg text-gray-700 placeholder-gray-400 bg-transparent px-4 pt-4 focus:outline-none custom-scrollbar"
+          placeholder={activeMode === AppMode.TEXT ? "发消息或输入“/”选择技能" : (activeMode === AppMode.IMAGE ? "描述图片设计方案..." : "上传图片，描述你想生成的视频")}
+          className="w-full h-24 resize-none text-base sm:text-lg text-gray-700 placeholder-gray-300 bg-transparent px-4 pt-4 focus:outline-none custom-scrollbar"
         />
         
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
-          <div className="relative">
-            <div 
-              onClick={() => toggleDropdown('model')}
-              className="flex items-center bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold text-gray-500 border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer select-none"
-            >
-               <Settings2 size={12} className="mr-2 text-gray-400" />
-               <span className="max-w-[120px] truncate">{config.model}</span>
-               <ChevronDown size={12} className={`ml-1 text-gray-400 transition-transform ${activeDropdown === 'model' ? 'rotate-180' : ''}`} />
-            </div>
-            {activeDropdown === 'model' && (
-              <div className="absolute bottom-full mb-2 left-0 w-48 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-bottom-2">
-                {MODELS[activeMode === AppMode.TEXT ? 'text' : (activeMode === AppMode.IMAGE ? 'image' : 'video')].map(m => (
-                  <button 
-                    key={m}
-                    onClick={() => { setConfig({...config, model: m}); setActiveDropdown(null); }}
-                    className={`w-full text-left px-4 py-2 text-xs hover:bg-blue-50 transition-colors ${config.model === m ? 'text-blue-600 font-bold' : 'text-gray-600'}`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center space-x-1">
+        <div 
+          className="flex flex-wrap items-center gap-2 px-4 pb-3 min-h-12 h-auto cursor-default"
+          onClick={() => setActiveDropdown(null)}
+        >
+          {/* Mode Switches */}
+          <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
             <button 
               onClick={() => switchMode(AppMode.IMAGE)}
               className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all duration-300 border ${activeMode === AppMode.IMAGE ? 'bg-blue-50 text-blue-600 border-blue-200 shadow-sm ring-1 ring-blue-100' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-gray-100'}`}
@@ -328,10 +609,102 @@ const App: React.FC = () => {
               <VideoIcon size={12} />
               <span>视频生成</span>
             </button>
+
+            {/* Attachment Button - Smart Dialogue */}
+            {activeMode === AppMode.TEXT && (
+              <>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={(e) => handleFileChange(e, 'attachments')} 
+                  className="hidden" 
+                  multiple
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.mp3,audio/*,image/*"
+                />
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all duration-300 border ${config.attachments?.length ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-white hover:border-blue-200 hover:text-blue-600'}`}
+                >
+                  <Paperclip size={12} />
+                  <span>附件{config.attachments?.length ? ` (${config.attachments.length})` : ''}</span>
+                </button>
+              </>
+            )}
+
+            {/* Reference Image Button - Image Mode */}
+            {activeMode === AppMode.IMAGE && (
+              <>
+                <input 
+                  type="file" 
+                  ref={refImgInputRef} 
+                  onChange={(e) => handleFileChange(e, 'refImages')} 
+                  className="hidden" 
+                  multiple
+                  accept="image/*"
+                />
+                <button 
+                  onClick={() => refImgInputRef.current?.click()}
+                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all duration-300 border ${config.refImages?.length ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-white hover:border-blue-200 hover:text-blue-600'}`}
+                >
+                  <ImageIcon size={12} />
+                  <span>参考图{config.refImages?.length ? ` (${config.refImages.length})` : ''}</span>
+                </button>
+              </>
+            )}
+
+            {/* Merged Video Reference Frames Entry - Video Mode */}
+            {activeMode === AppMode.VIDEO && (
+               <div className="relative">
+                 <input type="file" ref={videoFirstFrameRef} onChange={(e) => handleFileChange(e, 'videoFirstFrame')} className="hidden" accept="image/*" />
+                 <input type="file" ref={videoLastFrameRef} onChange={(e) => handleFileChange(e, 'videoLastFrame')} className="hidden" accept="image/*" />
+                 <button 
+                   onClick={() => toggleDropdown('frames')}
+                   className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all duration-300 border ${config.videoFirstFrame ? 'bg-indigo-50 text-indigo-600 border-indigo-200 shadow-sm' : 'bg-gray-50 text-gray-500 border-gray-100 hover:bg-white hover:border-indigo-200 hover:text-indigo-600'}`}
+                 >
+                   <ImageIcon size={12} />
+                   <span>首尾帧</span>
+                 </button>
+                 {activeDropdown === 'frames' && (
+                    <div className="absolute bottom-full mb-2 left-0 w-64 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 p-4 animate-in fade-in slide-in-from-bottom-2">
+                       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">上传视频帧</p>
+                       <div className="flex space-x-3">
+                          <div 
+                            onClick={() => videoFirstFrameRef.current?.click()}
+                            className={`flex-1 aspect-square rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors relative overflow-hidden ${config.videoFirstFrame ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 hover:border-indigo-300'}`}
+                          >
+                             {config.videoFirstFrame ? (
+                               <img src={URL.createObjectURL(config.videoFirstFrame)} className="w-full h-full object-cover" />
+                             ) : (
+                               <div className="text-center px-1">
+                                 <Plus size={14} className="mx-auto text-gray-400 mb-1" />
+                                 <span className="text-[9px] text-gray-500 font-bold">首帧(必)</span>
+                               </div>
+                             )}
+                          </div>
+                          <div 
+                            onClick={() => videoLastFrameRef.current?.click()}
+                            className={`flex-1 aspect-square rounded-xl border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-colors relative overflow-hidden ${config.videoLastFrame ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-purple-300'}`}
+                          >
+                             {config.videoLastFrame ? (
+                               <img src={URL.createObjectURL(config.videoLastFrame)} className="w-full h-full object-cover" />
+                             ) : (
+                               <div className="text-center px-1">
+                                 <Plus size={14} className="mx-auto text-gray-400 mb-1" />
+                                 <span className="text-[9px] text-gray-500 font-bold">尾帧(选)</span>
+                               </div>
+                             )}
+                          </div>
+                       </div>
+                    </div>
+                 )}
+               </div>
+            )}
           </div>
 
+          {/* Configuration controls for Image/Video */}
           {(activeMode === AppMode.IMAGE || activeMode === AppMode.VIDEO) && (
-            <>
+            <div className="flex items-center space-x-1 animate-in fade-in duration-300 flex-wrap gap-y-2" onClick={(e) => e.stopPropagation()}>
+              {/* Ratio Selection */}
               <div className="relative">
                 <div onClick={() => toggleDropdown('ratio')} className="flex items-center bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold text-gray-500 border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer select-none">
                    <Layers size={12} className="mr-2 text-gray-400" />
@@ -345,27 +718,91 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
-              <div className="relative">
-                <div onClick={() => toggleDropdown('style')} className="flex items-center bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold text-gray-500 border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer select-none">
-                   <Sparkles size={12} className="mr-2 text-gray-400" />
-                   <span>风格：{config.style}</span>
-                </div>
-                {activeDropdown === 'style' && (
-                  <div className="absolute bottom-full mb-2 left-0 w-32 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-bottom-2">
-                    {STYLES.map(s => (
-                      <button key={s} onClick={() => { setConfig({...config, style: s}); setActiveDropdown(null); }} className={`w-full text-left px-4 py-2 text-xs hover:bg-blue-50 transition-colors ${config.style === s ? 'text-blue-600 font-bold' : 'text-gray-600'}`}>{s}</button>
-                    ))}
+
+              {/* Size Configuration for Image Mode */}
+              {activeMode === AppMode.IMAGE && (
+                <div className="relative">
+                  <div onClick={() => toggleDropdown('size')} className="flex items-center bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold text-gray-500 border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer select-none">
+                     <Maximize size={12} className="mr-2 text-gray-400" />
+                     <span>尺寸：{config.imageSize || '1K'}</span>
                   </div>
-                )}
-              </div>
-            </>
+                  {activeDropdown === 'size' && (
+                    <div className="absolute bottom-full mb-2 left-0 w-32 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-bottom-2">
+                      {IMAGE_SIZES.map(s => (
+                        <button key={s} onClick={() => { setConfig({...config, imageSize: s}); setActiveDropdown(null); }} className={`w-full text-left px-4 py-2 text-xs hover:bg-blue-50 transition-colors ${config.imageSize === s ? 'text-blue-600 font-bold' : 'text-gray-600'}`}>{s}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Duration for Video Mode */}
+              {activeMode === AppMode.VIDEO && (
+                <div className="relative">
+                  <div onClick={() => toggleDropdown('duration')} className="flex items-center bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold text-gray-500 border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer select-none">
+                     <Clock size={12} className="mr-2 text-gray-400" />
+                     <span>时长：{config.duration}</span>
+                  </div>
+                  {activeDropdown === 'duration' && (
+                    <div className="absolute bottom-full mb-2 left-0 w-32 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-bottom-2">
+                      {VIDEO_DURATIONS.map(d => (
+                        <button key={d} onClick={() => { setConfig({...config, duration: d}); setActiveDropdown(null); }} className={`w-full text-left px-4 py-2 text-xs hover:bg-blue-50 transition-colors ${config.duration === d ? 'text-blue-600 font-bold' : 'text-gray-600'}`}>{d}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Resolution Configuration for Video Mode */}
+              {activeMode === AppMode.VIDEO && (
+                <div className="relative">
+                  <div onClick={() => toggleDropdown('resolution')} className="flex items-center bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold text-gray-500 border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer select-none">
+                     <Monitor size={12} className="mr-2 text-gray-400" />
+                     <span>分辨率：{config.videoResolution || '480p'}</span>
+                  </div>
+                  {activeDropdown === 'resolution' && (
+                    <div className="absolute bottom-full mb-2 left-0 w-32 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-bottom-2">
+                      {VIDEO_RESOLUTIONS.map(res => (
+                        <button key={res} onClick={() => { setConfig({...config, videoResolution: res}); setActiveDropdown(null); }} className={`w-full text-left px-4 py-2 text-xs hover:bg-blue-50 transition-colors ${config.videoResolution === res ? 'text-blue-600 font-bold' : 'text-gray-600'}`}>{res}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
-          <div className="ml-auto flex items-center pr-2">
+          {/* Model Selection */}
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            <div 
+              onClick={() => toggleDropdown('model')}
+              className="flex items-center bg-gray-50 px-3 py-1.5 rounded-xl text-[11px] font-bold text-gray-500 border border-gray-100 hover:bg-white hover:border-blue-200 transition-all cursor-pointer select-none"
+            >
+               <Settings2 size={12} className="mr-2 text-gray-400" />
+               <span className="max-w-[120px] truncate">{config.modelLabel || config.model}</span>
+               <ChevronDown size={12} className={`ml-1 text-gray-400 transition-transform ${activeDropdown === 'model' ? 'rotate-180' : ''}`} />
+            </div>
+            {activeDropdown === 'model' && (
+              <div className="absolute bottom-full mb-2 left-0 w-48 bg-white border border-gray-100 rounded-2xl shadow-xl z-50 py-2 animate-in fade-in slide-in-from-bottom-2">
+                {MODELS[activeMode === AppMode.TEXT ? 'text' : (activeMode === AppMode.IMAGE ? 'image' : 'video')].map(m => (
+                  <button 
+                    key={m.label + m.value}
+                    onClick={() => { setConfig({...config, model: m.value, modelLabel: m.label}); setActiveDropdown(null); }}
+                    className={`w-full text-left px-4 py-2 text-xs hover:bg-blue-50 transition-colors ${config.modelLabel === m.label ? 'text-blue-600 font-bold' : 'text-gray-600'}`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Send button */}
+          <div className="ml-auto flex items-center pr-2" onClick={(e) => e.stopPropagation()}>
             <button 
               onClick={() => handleSubmit()}
-              disabled={!inputPrompt.trim() || isGenerating}
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 ${inputPrompt.trim() && !isGenerating ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/30 scale-100' : 'bg-gray-100 text-gray-300 cursor-not-allowed scale-95'}`}
+              disabled={!inputPrompt.trim() && (!config.attachments || config.attachments.length === 0) && (!config.refImages || config.refImages.length === 0) && !config.videoFirstFrame && !config.videoLastFrame || isGenerating}
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300 ${ (inputPrompt.trim() || (config.attachments && config.attachments.length > 0) || (config.refImages && config.refImages.length > 0) || config.videoFirstFrame || config.videoLastFrame) && !isGenerating ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/30 scale-100' : 'bg-gray-100 text-gray-300 cursor-not-allowed scale-95'}`}
             >
               {isGenerating ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Send size={20} />}
             </button>
@@ -483,7 +920,7 @@ const App: React.FC = () => {
           </div>
           <div className="bg-white p-6 rounded-[24px] border border-gray-100 shadow-sm flex items-center space-x-4 border-l-4 border-l-blue-500">
             <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center"><TrendingUp className="text-blue-600" size={24} /></div>
-            <div><p className="text-xs font-bold text-blue-600 uppercase tracking-wider">月活 (MAU)</p><p className="text-2xl font-bold text-gray-800">{mauCount}</p><p className="text-[9px] text-gray-400 mt-1">月活跃天数>9</p></div>
+            <div><p className="text-xs font-bold blue-600 uppercase tracking-wider">月活 (MAU)</p><p className="text-2xl font-bold text-gray-800">{mauCount}</p><p className="text-[9px] text-gray-400 mt-1">月活跃天数>9</p></div>
           </div>
         </div>
 
@@ -545,7 +982,7 @@ const App: React.FC = () => {
                           <td className="px-8 py-5 text-xs font-medium text-gray-500">{date}</td>
                           <td className="px-8 py-5">
                             <div className="flex flex-col">
-                              <span className="text-xs font-bold text-gray-800">AI创意</span>
+                              <span className="text-xs font-bold text-gray-800">AI小禹</span>
                               <span className="text-[9px] text-gray-400 font-bold uppercase">PRIMARY MODULE</span>
                             </div>
                           </td>
@@ -648,7 +1085,7 @@ const App: React.FC = () => {
                               <td className="px-8 py-3">
                                 <div className="flex items-center space-x-2">
                                   <div className="w-1 h-1 rounded-full bg-indigo-400"></div>
-                                  <span className="text-[10px] text-gray-400 font-bold uppercase">AI创意</span>
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase">AI小禹</span>
                                   <ChevronRight size={10} className="text-gray-300" />
                                   <span className="text-[10px] font-bold uppercase text-gray-600">{getModuleLabels(log.mode).level2}</span>
                                 </div>
@@ -673,12 +1110,90 @@ const App: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-[#F7F8FA] overflow-hidden font-sans">
+      {/* Toast Feedback */}
+      {toast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[110] flex items-center space-x-3 bg-white px-6 py-3 rounded-2xl shadow-2xl border border-gray-100 animate-in fade-in slide-in-from-top-4 duration-300">
+           <div className={`w-8 h-8 rounded-full flex items-center justify-center ${toast.type === 'success' ? 'bg-green-50 text-green-600' : 'bg-blue-50 text-blue-600'}`}>
+              {toast.type === 'success' ? <Check size={18} /> : <AlertCircle size={18} />}
+           </div>
+           <span className="text-sm font-bold text-gray-800">{toast.message}</span>
+        </div>
+      )}
+
+      {/* Enhanced Lightbox Modal */}
+      {previewContent && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 animate-in fade-in duration-300 backdrop-blur-md"
+          onClick={() => setPreviewContent(null)}
+        >
+          <div className="absolute top-6 right-6 flex items-center space-x-4" onClick={(e) => e.stopPropagation()}>
+             <button 
+               onClick={() => downloadFile(previewContent.url, previewContent.name)}
+               className="p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors flex items-center space-x-2"
+               title="下载到本地"
+             >
+               <Download size={20} />
+               <span className="text-sm font-medium">下载</span>
+             </button>
+             <button 
+               onClick={() => setPreviewContent(null)}
+               className="p-3 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
+               title="关闭预览"
+             >
+               <X size={20} />
+             </button>
+          </div>
+          
+          <div className="max-w-[90vw] max-h-[85vh] flex flex-col items-center justify-center relative" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white/5 p-2 rounded-3xl backdrop-blur-sm border border-white/10 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-500">
+                {previewContent.type.startsWith('image/') ? (
+                  <img 
+                    src={previewContent.url} 
+                    alt={previewContent.name} 
+                    className="max-w-full max-h-[70vh] object-contain rounded-2xl"
+                  />
+                ) : previewContent.type.startsWith('video/') ? (
+                  <video 
+                    src={previewContent.url} 
+                    controls 
+                    autoPlay
+                    className="max-w-full max-h-[70vh] rounded-2xl"
+                  />
+                ) : (
+                  <div className="w-80 h-80 flex flex-col items-center justify-center bg-white rounded-2xl text-center p-8">
+                     <div className="w-20 h-20 bg-gray-50 rounded-3xl flex items-center justify-center mb-6">
+                        {getFileIconInternal(previewContent.type, previewContent.name)}
+                     </div>
+                     <p className="font-bold text-gray-800 mb-2 truncate w-full">{previewContent.name}</p>
+                     <p className="text-xs text-gray-400 mb-8 uppercase font-bold tracking-widest">{previewContent.type}</p>
+                     <button 
+                        onClick={() => downloadFile(previewContent.url, previewContent.name)}
+                        className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center space-x-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+                     >
+                        <Download size={18} />
+                        <span>立即下载</span>
+                     </button>
+                  </div>
+                )}
+            </div>
+            <div className="mt-6 flex flex-col items-center">
+                <p className="text-white font-bold text-lg">{previewContent.name}</p>
+                <div className="mt-2 flex items-center space-x-2 text-white/40 text-xs font-medium uppercase tracking-widest">
+                   <span>{previewContent.type}</span>
+                   <div className="w-1 h-1 rounded-full bg-white/20"></div>
+                   <span>点击背景区域可关闭窗口</span>
+                </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
         <div className="p-6 flex items-center space-x-2">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
             <Sparkles className="text-white w-5 h-5" />
           </div>
-          <h1 className="text-xl font-bold text-gray-800">AI创意</h1>
+          <h1 className="text-xl font-bold text-gray-800">AI小禹</h1>
         </div>
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto custom-scrollbar">
@@ -763,12 +1278,14 @@ const App: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-8 py-8 flex flex-col">
           {activeView === 'logs' ? renderLogsView() : (
-            <div className={`max-w-4xl mx-auto w-full flex flex-col space-y-8 ${!activeSessionId ? 'flex-1 justify-center items-center' : ''}`}>
+            <div className={`max-w-4xl mx-auto w-full flex flex-col ${!activeSessionId ? 'flex-1 pt-[20vh]' : 'space-y-8'}`}>
               {!activeSessionId && !isGenerating && (
                 <div className="w-full flex flex-col items-center animate-in fade-in zoom-in-95 duration-500">
-                  {renderInputArea()}
+                  <div className="w-full mb-12">
+                    {renderInputArea()}
+                  </div>
                   {landingCases.length > 0 && (
-                    <div className="mt-12 w-full grid gap-6 grid-cols-1 md:grid-cols-3">
+                    <div className="w-full grid gap-6 grid-cols-1 md:grid-cols-3 animate-in fade-in slide-in-from-top-4 duration-700 delay-200">
                       {landingCases.map(item => (
                         <button key={item.id} onClick={() => useCase(item)} className="group relative flex flex-col items-start bg-white rounded-3xl border border-gray-100 hover:border-blue-200 hover:shadow-2xl transition-all overflow-hidden text-left">
                           {item.previewUrl && (
@@ -798,37 +1315,156 @@ const App: React.FC = () => {
               )}
 
               {currentSession?.messages.map((msg) => (
-                <div key={msg.id} className="flex flex-col space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div key={msg.id} className="flex flex-col space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300 mb-8">
                   {msg.role === 'user' ? (
-                    <div className="flex justify-end">
+                    <div className="flex flex-col items-end space-y-2">
                       <div className="max-w-[80%] bg-blue-600 text-white rounded-3xl rounded-tr-sm px-6 py-4 shadow-lg shadow-blue-500/20">
                         <p className="text-sm leading-relaxed">{msg.content}</p>
                       </div>
+                      {/* Attachments displayed in chat box */}
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="flex flex-wrap justify-end gap-2 max-w-[80%]">
+                          {msg.attachments.map((att, idx) => (
+                            <div 
+                              key={idx} 
+                              className="relative group w-16 h-16 sm:w-24 sm:h-24 rounded-2xl overflow-hidden border border-gray-100 bg-white flex items-center justify-center shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                              onClick={() => handleAttachmentClick(att)}
+                            >
+                              {att.url && att.type.startsWith('image/') ? (
+                                <img src={att.url} alt={att.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="flex flex-col items-center justify-center p-1 w-full h-full">
+                                  {getFileIconInternal(att.type, att.name)}
+                                  <span className="text-[8px] sm:text-[10px] text-gray-500 mt-2 truncate w-full px-2 text-center font-medium">{att.name}</span>
+                                </div>
+                              )}
+                              
+                              {/* Hover Overlay Actions */}
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
+                                 {att.url && (
+                                   <>
+                                     <button 
+                                       onClick={(e) => { e.stopPropagation(); handleAttachmentClick(att); }}
+                                       className="p-1.5 bg-white rounded-full text-blue-600 shadow-sm hover:scale-110 transition-transform"
+                                       title="预览"
+                                     >
+                                       <Eye size={14} />
+                                     </button>
+                                     <button 
+                                       onClick={(e) => { e.stopPropagation(); downloadFile(att.url!, att.name); }}
+                                       className="p-1.5 bg-white rounded-full text-gray-700 shadow-sm hover:scale-110 transition-transform"
+                                       title="下载"
+                                     >
+                                       <Download size={14} />
+                                     </button>
+                                   </>
+                                 )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="flex justify-start">
-                      <div className="max-w-[90%] bg-gray-50 border border-gray-100 rounded-3xl rounded-tl-sm p-6 space-y-4 w-full">
+                      <div className="max-w-[90%] bg-gray-50 border border-gray-100 rounded-3xl rounded-tl-sm p-6 space-y-4 w-full group/msg relative">
                         <div className="flex items-center space-x-2 mb-2">
                            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
                               <Sparkles size={12} className="text-blue-600" />
                            </div>
                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">AI 响应</span>
                         </div>
+                        
                         {msg.resultUrl && (
-                          <div className="rounded-2xl overflow-hidden shadow-sm bg-white group relative max-w-2xl">
-                            {activeMode === AppMode.VIDEO ? <video src={msg.resultUrl} controls className="w-full max-h-[500px]" /> : <img src={msg.resultUrl} alt="Result" className="w-full max-h-[500px] object-contain" />}
-                            <div className="absolute top-4 right-4 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                               <button className="p-2 bg-white/80 backdrop-blur rounded-lg shadow-sm hover:bg-white transition-colors"><Download size={16} className="text-gray-700" /></button>
-                               <button className="p-2 bg-white/80 backdrop-blur rounded-lg shadow-sm hover:bg-white transition-colors"><RefreshCw size={16} className="text-gray-700" /></button>
+                          <div className={`rounded-2xl overflow-hidden shadow-sm bg-white group/result relative transition-all ${msg.ratio && (msg.ratio === '9:16' || msg.ratio === '3:4') ? 'max-w-[320px]' : (msg.ratio === '1:1' ? 'max-w-[400px]' : 'max-w-2xl')}`}>
+                            {msg.ratio ? (
+                              <div style={{ aspectRatio: msg.ratio.replace(':', '/') }} className="w-full bg-gray-100">
+                                {activeMode === AppMode.VIDEO ? (
+                                  <video src={msg.resultUrl} controls className="w-full h-full object-cover" />
+                                ) : (
+                                  <img src={msg.resultUrl} alt="Result" className="w-full h-full object-cover" />
+                                )}
+                              </div>
+                            ) : (
+                               activeMode === AppMode.VIDEO ? <video src={msg.resultUrl} controls className="w-full max-h-[500px]" /> : <img src={msg.resultUrl} alt="Result" className="w-full max-h-[500px] object-contain" />
+                            )}
+                            
+                            {/* Result Hover Actions */}
+                            <div className="absolute top-4 right-4 flex space-x-2 opacity-0 group-hover/result:opacity-100 transition-opacity z-10">
+                               <button 
+                                 onClick={() => {
+                                    if (msg.resultUrl) {
+                                      setPreviewContent({ 
+                                        url: msg.resultUrl, 
+                                        name: activeMode === AppMode.VIDEO ? '生成视频' : '生成图片', 
+                                        type: activeMode === AppMode.VIDEO ? 'video/mp4' : 'image/png' 
+                                      });
+                                    }
+                                 }}
+                                 className="p-2 bg-white/80 backdrop-blur rounded-lg shadow-sm hover:bg-white transition-colors"
+                                 title="预览"
+                               >
+                                 <Eye size={16} className="text-gray-700" />
+                               </button>
+                               <button 
+                                 onClick={() => downloadFile(msg.resultUrl!, `result-${Date.now()}.${activeMode === AppMode.VIDEO ? 'mp4' : 'png'}`)}
+                                 className="p-2 bg-white/80 backdrop-blur rounded-lg shadow-sm hover:bg-white transition-colors"
+                                 title="下载到本地"
+                               >
+                                 <Download size={16} className="text-gray-700" />
+                               </button>
+                               <button 
+                                 onClick={() => handleSubmit(msg.content)}
+                                 className="p-2 bg-white/80 backdrop-blur rounded-lg shadow-sm hover:bg-white transition-colors"
+                                 title="重新生成"
+                               >
+                                 <RefreshCw size={16} className="text-gray-700" />
+                               </button>
                             </div>
                           </div>
                         )}
+                        
                         {msg.content && <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed whitespace-pre-wrap">{msg.content}</div>}
+                        
                         <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                           <p className="text-[10px] text-gray-400">已自动为您保存到历史记录</p>
+                           <div className="flex items-center space-x-1">
+                             <button 
+                                onClick={() => handleCopyText(msg.content || '', msg.id)}
+                                className={`p-1.5 rounded-lg transition-colors hover:bg-gray-200 text-gray-500 flex items-center space-x-1`}
+                                title="复制内容"
+                             >
+                               {copyStatus === msg.id ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                               {copyStatus === msg.id && <span className="text-[10px] font-bold text-green-500">已复制</span>}
+                             </button>
+                             <button 
+                                onClick={() => {
+                                  // Find the last user prompt in this session
+                                  const lastUserMsg = currentSession?.messages.filter(m => m.role === 'user').pop();
+                                  if (lastUserMsg) handleSubmit(lastUserMsg.content);
+                                }}
+                                className="p-1.5 rounded-lg transition-colors hover:bg-gray-200 text-gray-500"
+                                title="重新生成结果"
+                             >
+                               <RefreshCw size={14} />
+                             </button>
+                             <div className="w-px h-3 bg-gray-200 mx-1"></div>
+                             <button 
+                               onClick={() => handleFeedback(msg.id, 'like')} 
+                               className={`p-1.5 rounded-lg transition-colors ${msg.feedback === 'like' ? 'text-blue-500 bg-blue-50' : 'hover:text-gray-600 hover:bg-gray-100 text-gray-500'}`} 
+                               title="喜欢"
+                             >
+                               <ThumbsUp size={14} />
+                             </button>
+                             <button 
+                               onClick={() => handleFeedback(msg.id, 'dislike')} 
+                               className={`p-1.5 rounded-lg transition-colors ${msg.feedback === 'dislike' ? 'text-red-500 bg-red-50' : 'hover:text-gray-600 hover:bg-gray-100 text-gray-500'}`} 
+                               title="不喜欢"
+                             >
+                               <ThumbsDown size={14} />
+                             </button>
+                           </div>
                            <div className="flex items-center space-x-4">
-                             <button className="text-[10px] font-bold text-blue-600 hover:underline">继续微调</button>
-                             <button className="text-[10px] font-bold text-gray-400 hover:text-gray-600">不满意？</button>
+                             <button className="text-[10px] font-bold text-gray-400 hover:text-gray-600">已保存</button>
                            </div>
                         </div>
                       </div>
@@ -857,7 +1493,7 @@ const App: React.FC = () => {
         </div>
 
         {activeSessionId && activeView === 'chat' && (
-          <div className="p-4 sm:p-8 bg-gradient-to-t from-white via-white to-transparent sticky bottom-0 z-10" ref={dropdownRef}>
+          <div className="p-4 sm:p-8 bg-gradient-to-t from-white via-white to-transparent sticky bottom-0 z-10">
             <div className="max-w-4xl mx-auto">
               {renderInputArea()}
               <p className="text-center text-[10px] text-gray-400 mt-4 px-4 font-medium uppercase tracking-widest">Enterprise AI Laboratory</p>
