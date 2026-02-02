@@ -38,9 +38,10 @@ import {
   Check,
   AlertCircle,
   Wand2,
-  Film
+  Film,
+  MessageCircle
 } from 'lucide-react';
-import { AppMode, DialogueSession, Message, AppConfig, CaseItem, DateLog, UserDailyStat } from './types';
+import { AppMode, DialogueSession, Message, AppConfig, CaseItem, DateLog, UserDailyStat, FeedbackData } from './types';
 import { DAILY_TOKEN_LIMIT, MODELS, IMAGE_RATIOS, IMAGE_SIZES, VIDEO_RATIOS, VIDEO_DURATIONS, VIDEO_RESOLUTIONS, STYLES, CASES } from './constants';
 import { AIService } from './services/geminiService';
 
@@ -92,9 +93,38 @@ const AttachmentThumbnail: React.FC<{ file: File; onRemove: () => void; onClick:
   );
 });
 
+// Feedback Form Component (Modified: Plain text only, no tags)
+const FeedbackForm = ({ type, onSubmit, onClose }: { type: 'like' | 'dislike', onSubmit: (tags: string[], comment: string) => void, onClose: () => void }) => {
+  const [comment, setComment] = useState('');
+  
+  const title = type === 'like' ? '你觉得什么让你满意？' : '你觉得哪里需要改进？';
+
+  return (
+    <div className="mt-3 bg-white border border-gray-200 rounded-2xl p-4 shadow-sm animate-in fade-in slide-in-from-top-2 relative max-w-lg">
+       <button onClick={onClose} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"><X size={16} /></button>
+       <p className="text-sm font-bold text-gray-800 mb-3">{title}</p>
+       
+       <textarea 
+         value={comment}
+         onChange={e => setComment(e.target.value)}
+         placeholder={type === 'like' ? "告诉我们做得好的地方..." : "请详细描述您遇到的问题..."}
+         className="w-full h-20 p-3 text-xs bg-gray-50 border border-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-100 focus:bg-white transition-all resize-none mb-3"
+       />
+       <div className="flex justify-end">
+          <button 
+            onClick={() => onSubmit([], comment)}
+            className="px-6 py-2 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+          >
+            提交反馈
+          </button>
+       </div>
+    </div>
+  )
+}
+
 const App: React.FC = () => {
   const [activeView, setActiveView] = useState<'chat' | 'logs'>('chat');
-  const [activeLogTab, setActiveLogTab] = useState<'overview' | 'details'>('overview');
+  const [activeLogTab, setActiveLogTab] = useState<'overview' | 'details' | 'feedback'>('overview');
   const [activeMode, setActiveMode] = useState<AppMode>(AppMode.TEXT);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<DialogueSession[]>([]);
@@ -104,6 +134,7 @@ const App: React.FC = () => {
   const [logs, setLogs] = useState<DateLog[]>([]);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
+  const [activeFeedback, setActiveFeedback] = useState<{ msgId: string; type: 'like' | 'dislike' } | null>(null);
   
   // For file preview lightbox
   const [previewContent, setPreviewContent] = useState<{ url: string; name: string; type: string } | null>(null);
@@ -184,6 +215,34 @@ const App: React.FC = () => {
     const userStat = dayLog.users[userId][mode];
     if (type === 'pv') userStat.pv += value;
     if (type === 'points') userStat.points += value;
+
+    setLogs([...currentLogs]);
+    localStorage.setItem('ai_system_dashboard_logs', JSON.stringify(currentLogs));
+  };
+
+  const trackFeedback = (msg: Message, type: 'like' | 'dislike', tags: string[], comment: string) => {
+    const today = new Date().toISOString().split('T')[0];
+    const savedLogs = localStorage.getItem('ai_system_dashboard_logs');
+    let currentLogs: DateLog[] = savedLogs ? JSON.parse(savedLogs) : [];
+    
+    let dayLog = currentLogs.find(l => l.date === today);
+    if (!dayLog) {
+        dayLog = { date: today, users: {} };
+        currentLogs.push(dayLog);
+    }
+    
+    if (!dayLog.feedbacks) dayLog.feedbacks = [];
+    
+    dayLog.feedbacks.push({
+        id: msg.id,
+        userId: userId,
+        mode: currentSession?.mode || AppMode.TEXT,
+        type,
+        tags,
+        comment,
+        timestamp: Date.now(),
+        contentSnapshot: msg.content?.slice(0, 100) || ''
+    });
 
     setLogs([...currentLogs]);
     localStorage.setItem('ai_system_dashboard_logs', JSON.stringify(currentLogs));
@@ -542,12 +601,14 @@ const App: React.FC = () => {
 
       const msg = { ...session.messages[msgIndex] };
       
-      // Toggle feedback
+      // If clicking the same type, untoggle it and close modal
       if (msg.feedback === type) {
         msg.feedback = null;
+        setActiveFeedback(null);
       } else {
+        // If clicking different type, set it and open modal
         msg.feedback = type;
-        // If switching, the other type is automatically unset because feedback is a single property 'like' | 'dislike' | null
+        setActiveFeedback({ msgId, type });
       }
 
       session.messages = [...session.messages];
@@ -557,6 +618,38 @@ const App: React.FC = () => {
       localStorage.setItem('ai_creative_sessions', JSON.stringify(newSessions));
       return newSessions;
     });
+  };
+
+  const submitFeedback = (tags: string[], comment: string) => {
+      if (!activeFeedback) return;
+      
+      const { msgId, type } = activeFeedback;
+      
+      setSessions(prevSessions => {
+          const newSessions = [...prevSessions];
+          const sessionIndex = newSessions.findIndex(s => s.id === activeSessionId);
+          if (sessionIndex === -1) return prevSessions;
+
+          const session = { ...newSessions[sessionIndex] };
+          const msgIndex = session.messages.findIndex(m => m.id === msgId);
+          if (msgIndex === -1) return prevSessions;
+
+          const msg = { ...session.messages[msgIndex] };
+          msg.feedbackData = { tags, comment };
+          
+          // Log the detailed feedback
+          trackFeedback(msg, type, tags, comment);
+
+          session.messages = [...session.messages];
+          session.messages[msgIndex] = msg;
+          newSessions[sessionIndex] = session;
+          
+          localStorage.setItem('ai_creative_sessions', JSON.stringify(newSessions));
+          return newSessions;
+      });
+      
+      setActiveFeedback(null);
+      showToast("感谢您的反馈");
   };
 
   const landingCases = activeMode === AppMode.TEXT ? [] : CASES.filter(c => c.type === activeMode);
@@ -954,6 +1047,12 @@ const App: React.FC = () => {
                >
                  行为明细
                </button>
+               <button 
+                 onClick={() => setActiveLogTab('feedback')}
+                 className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all ${activeLogTab === 'feedback' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+               >
+                 用户反馈
+               </button>
              </div>
              <div className="flex items-center space-x-2 bg-white border border-gray-100 rounded-xl px-3 py-1.5 shadow-sm">
                 <Calendar size={14} className="text-gray-400" />
@@ -1079,7 +1178,7 @@ const App: React.FC = () => {
               </table>
             </div>
           </div>
-        ) : (
+        ) : activeLogTab === 'details' ? (
           <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-100 bg-gray-50/30 flex items-center justify-between">
               <h3 className="font-bold text-gray-800 flex items-center space-x-2"><Users size={18} className="text-indigo-500" /><span>用户审计明细</span></h3>
@@ -1161,6 +1260,64 @@ const App: React.FC = () => {
                       );
                     });
                   })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-[32px] border border-gray-100 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-gray-100 bg-gray-50/30 flex items-center justify-between">
+              <h3 className="font-bold text-gray-800 flex items-center space-x-2"><MessageCircle size={18} className="text-green-500" /><span>用户反馈记录</span></h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-gray-50/50 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100">
+                    <th className="px-8 py-4 w-32">日期</th>
+                    <th className="px-8 py-4 w-32">用户</th>
+                    <th className="px-8 py-4 w-24">类型</th>
+                    <th className="px-8 py-4">评论内容</th>
+                    <th className="px-8 py-4 w-48">上下文摘要</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {(() => {
+                    const monthlyFeedbacks = filteredLogs.flatMap(log => 
+                      (log.feedbacks || []).map(f => ({ ...f, date: log.date }))
+                    ).sort((a, b) => b.timestamp - a.timestamp);
+
+                    if (monthlyFeedbacks.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={5} className="px-8 py-10 text-center text-xs text-gray-400 italic">暂无反馈记录</td>
+                        </tr>
+                      );
+                    }
+
+                    return monthlyFeedbacks.map((item, index) => (
+                      <tr key={item.id + index} className="hover:bg-gray-50/80 transition-colors">
+                         <td className="px-8 py-4 text-xs font-medium text-gray-500">{item.date}</td>
+                         <td className="px-8 py-4">
+                            <div className="flex items-center space-x-2">
+                              <div className="w-5 h-5 rounded bg-gray-100 flex items-center justify-center text-[9px] font-bold text-gray-500">{item.userId.charAt(0)}</div>
+                              <span className="text-xs text-gray-700">{item.userId}</span>
+                            </div>
+                         </td>
+                         <td className="px-8 py-4">
+                            <div className={`inline-flex items-center space-x-1 px-2 py-1 rounded-md text-[10px] font-bold ${item.type === 'like' ? 'bg-blue-50 text-blue-600' : 'bg-red-50 text-red-600'}`}>
+                              {item.type === 'like' ? <ThumbsUp size={10} /> : <ThumbsDown size={10} />}
+                              <span>{item.type === 'like' ? '满意' : '不满'}</span>
+                            </div>
+                         </td>
+                         <td className="px-8 py-4">
+                            <p className="text-xs text-gray-800 leading-relaxed max-w-md">{item.comment || <span className="text-gray-300 italic">未填写评论</span>}</p>
+                         </td>
+                         <td className="px-8 py-4">
+                            <p className="text-[10px] text-gray-400 leading-tight truncate max-w-xs" title={item.contentSnapshot}>{item.contentSnapshot || '-'}</p>
+                         </td>
+                      </tr>
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -1505,46 +1662,73 @@ const App: React.FC = () => {
                         
                         {msg.content && <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed whitespace-pre-wrap">{msg.content}</div>}
                         
-                        <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                           <div className="flex items-center space-x-1">
-                             <button 
-                                onClick={() => handleCopyText(msg.content || '', msg.id)}
-                                className={`p-1.5 rounded-lg transition-colors hover:bg-gray-200 text-gray-500 flex items-center space-x-1`}
-                                title="复制内容"
-                             >
-                               {copyStatus === msg.id ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-                               {copyStatus === msg.id && <span className="text-[10px] font-bold text-green-500">已复制</span>}
-                             </button>
-                             <button 
-                                onClick={() => {
-                                  // Find the last user prompt in this session
-                                  const lastUserMsg = currentSession?.messages.filter(m => m.role === 'user').pop();
-                                  if (lastUserMsg) handleSubmit(lastUserMsg.content);
-                                }}
-                                className="p-1.5 rounded-lg transition-colors hover:bg-gray-200 text-gray-500"
-                                title="重新生成结果"
-                             >
-                               <RefreshCw size={14} />
-                             </button>
-                             <div className="w-px h-3 bg-gray-200 mx-1"></div>
-                             <button 
-                               onClick={() => handleFeedback(msg.id, 'like')} 
-                               className={`p-1.5 rounded-lg transition-colors ${msg.feedback === 'like' ? 'text-blue-500 bg-blue-50' : 'hover:text-gray-600 hover:bg-gray-100 text-gray-500'}`} 
-                               title="喜欢"
-                             >
-                               <ThumbsUp size={14} />
-                             </button>
-                             <button 
-                               onClick={() => handleFeedback(msg.id, 'dislike')} 
-                               className={`p-1.5 rounded-lg transition-colors ${msg.feedback === 'dislike' ? 'text-red-500 bg-red-50' : 'hover:text-gray-600 hover:bg-gray-100 text-gray-500'}`} 
-                               title="不喜欢"
-                             >
-                               <ThumbsDown size={14} />
-                             </button>
+                        {/* Feedback Area */}
+                        <div className="flex flex-col border-t border-gray-100 pt-4">
+                           <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-1">
+                                <button 
+                                    onClick={() => handleCopyText(msg.content || '', msg.id)}
+                                    className={`p-1.5 rounded-lg transition-colors hover:bg-gray-200 text-gray-500 flex items-center space-x-1`}
+                                    title="复制内容"
+                                >
+                                  {copyStatus === msg.id ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                                  {copyStatus === msg.id && <span className="text-[10px] font-bold text-green-500">已复制</span>}
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                      const lastUserMsg = currentSession?.messages.filter(m => m.role === 'user').pop();
+                                      if (lastUserMsg) handleSubmit(lastUserMsg.content);
+                                    }}
+                                    className="p-1.5 rounded-lg transition-colors hover:bg-gray-200 text-gray-500"
+                                    title="重新生成结果"
+                                >
+                                  <RefreshCw size={14} />
+                                </button>
+                                <div className="w-px h-3 bg-gray-200 mx-1"></div>
+                                <button 
+                                  onClick={() => handleFeedback(msg.id, 'like')} 
+                                  className={`p-1.5 rounded-lg transition-colors ${msg.feedback === 'like' ? 'text-blue-500 bg-blue-50' : 'hover:text-gray-600 hover:bg-gray-100 text-gray-500'}`} 
+                                  title="喜欢"
+                                >
+                                  <ThumbsUp size={14} />
+                                </button>
+                                <button 
+                                  onClick={() => handleFeedback(msg.id, 'dislike')} 
+                                  className={`p-1.5 rounded-lg transition-colors ${msg.feedback === 'dislike' ? 'text-red-500 bg-red-50' : 'hover:text-gray-600 hover:bg-gray-100 text-gray-500'}`} 
+                                  title="不喜欢"
+                                >
+                                  <ThumbsDown size={14} />
+                                </button>
+                              </div>
+                              <div className="flex items-center space-x-4">
+                                <button className="text-[10px] font-bold text-gray-400 hover:text-gray-600">已保存</button>
+                              </div>
                            </div>
-                           <div className="flex items-center space-x-4">
-                             <button className="text-[10px] font-bold text-gray-400 hover:text-gray-600">已保存</button>
-                           </div>
+                           
+                           {/* Feedback Form Render */}
+                           {activeFeedback && activeFeedback.msgId === msg.id && (
+                             <FeedbackForm 
+                               type={activeFeedback.type} 
+                               onSubmit={submitFeedback} 
+                               onClose={() => setActiveFeedback(null)} 
+                             />
+                           )}
+                           
+                           {/* Show Submitted Feedback */}
+                           {!activeFeedback && msg.feedbackData && (
+                             <div className="mt-3 p-3 bg-gray-50 rounded-xl text-xs text-gray-500 border border-gray-100 flex items-start space-x-2">
+                               <div className="mt-0.5"><Check size={12} className="text-green-500" /></div>
+                               <div>
+                                 <p className="font-bold text-gray-700 mb-1">感谢您的反馈</p>
+                                 {msg.feedbackData.tags && msg.feedbackData.tags.length > 0 && (
+                                   <div className="flex flex-wrap gap-1 mb-1">
+                                      {msg.feedbackData.tags.map(t => <span key={t} className="px-1.5 py-0.5 bg-white border border-gray-200 rounded text-[10px]">{t}</span>)}
+                                   </div>
+                                 )}
+                                 {msg.feedbackData.comment && <p className="italic">"{msg.feedbackData.comment}"</p>}
+                               </div>
+                             </div>
+                           )}
                         </div>
                       </div>
                     </div>
@@ -1585,4 +1769,3 @@ const App: React.FC = () => {
 };
 
 export default App;
-    

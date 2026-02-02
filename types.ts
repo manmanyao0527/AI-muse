@@ -5,6 +5,11 @@ export enum AppMode {
   VIDEO = 'video'
 }
 
+export interface FeedbackData {
+  tags: string[];
+  comment: string;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
@@ -14,6 +19,7 @@ export interface Message {
   attachments?: { name: string; type: string; url?: string }[];
   timestamp: number;
   feedback?: 'like' | 'dislike' | null;
+  feedbackData?: FeedbackData; // Added for detailed feedback
   ratio?: string;
 }
 
@@ -62,9 +68,21 @@ export interface UserDailyStat {
   [mode: string]: UserModeStat;
 }
 
+export interface FeedbackLogItem {
+  id: string;
+  userId: string;
+  mode: string;
+  type: 'like' | 'dislike';
+  tags: string[];
+  comment: string;
+  timestamp: number;
+  contentSnapshot?: string;
+}
+
 export interface DateLog {
   date: string; // YYYY-MM-DD
   users: {
     [userId: string]: UserDailyStat;
   };
+  feedbacks?: FeedbackLogItem[]; // Added for feedback logging
 }
